@@ -1205,101 +1205,115 @@ function restart(){
 
 /* ── 국립국어원 표준국어대사전 API ── */
 const KRDICT_KEY = 'D83BE0F5DD7BCA86FB5F74F67DDA4C3';
-const CORS_PROXY = 'https://corsproxy.io/?url=';
 
-/* 단어 뜻 가져오기 (국립국어원 → 어린이용 요약) */
-async function getDef(word) {
-  try {
-    const url = `https://stdict.korean.go.kr/api/search.do?key=${KRDICT_KEY}&q=${encodeURIComponent(word)}&req_type=json&num=3&start=1&type1=word&advanced=n`;
-    const res = await fetch(CORS_PROXY + encodeURIComponent(url));
-    const data = await res.json();
-
-    const items = data?.channel?.item;
-    if (!items) throw new Error('no result');
-
-    // 여러 결과에서 뜻 모으기 (최대 2개)
-    const arr = Array.isArray(items) ? items : [items];
-    const defs = arr
-      .slice(0, 2)
-      .map(item => {
-        const sense = item?.sense;
-        if (!sense) return null;
-        const senseArr = Array.isArray(sense) ? sense : [sense];
-        return senseArr[0]?.definition || null;
-      })
-      .filter(Boolean);
-
-    if (defs.length === 0) throw new Error('no def');
-
-    // 어린이용으로 풀어쓰기 (AI 있으면 AI로, 없으면 원문 그대로)
-    const rawDef = defs.join(' ');
-    try {
-      return await askAI(
-        `다음은 국어사전의 단어 뜻이에요: "${rawDef}"
-` +
-        `이 뜻을 초등학생이 이해하기 쉽게 2~3문장으로 풀어서 설명해줘. ` +
-        `쉬운 예시도 하나 넣어줘. 이모지 없이 텍스트만으로.`
-      );
-    } catch {
-      // AI 없으면 원문 반환
-      return rawDef;
-    }
-  } catch (e) {
-    // API 실패 시 AI 직접 호출
-    try {
-      return await askAI(
-        `초등학생에게 "${word}"의 뜻을 2~3문장으로 쉽고 친근하게 설명해줘. ` +
-        `예시를 하나 포함해줘. 이모지 없이 텍스트만으로 작성해줘.`
-      );
-    } catch {
-      return `"${word}"의 뜻을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.`;
-    }
+/* ── 예시 단어 하드코딩 프리셋 (오프라인에서도 즉시 작동) ── */
+const PRESET = {
+  '발효': {
+    def: '발효는 미생물이 음식 속 성분을 변화시켜 새로운 맛과 영양을 만들어내는 과정이에요. 배추에 소금과 양념을 넣고 기다리면 김치가 되는 것처럼, 보이지 않는 작은 생물들이 음식을 변신시키는 거예요. 된장, 요구르트, 빵도 모두 발효를 거쳐 탄생한답니다.',
+    recipe: '할머니네 항아리 속에서 2년째 ___가 일어나고 있었어요.\n뚜껑을 열자 구수한 된장 냄새가 온 집 안에 가득 퍼졌어요.\n오늘 드디어 그 된장으로 따뜻한 찌개를 끓이는 날이에요.'
+  },
+  '합성': {
+    def: '합성은 두 가지 이상의 것을 합쳐서 전혀 새로운 것을 만들어내는 거예요. 식물이 햇빛, 물, 이산화탄소를 합쳐 스스로 영양분을 만드는 광합성도 합성이에요. 우리가 입는 나일론 옷도 여러 화학 물질을 합성해서 만든답니다.',
+    recipe: '과학 시간에 선생님이 두 가지 투명한 액체를 조심스럽게 섞었어요.\n보글보글 거품이 생기면서 새로운 물질이 만들어지는 ___ 반응이 일어났어요.\n교실 안에 신기한 냄새가 퍼졌지만 모두 눈을 반짝이며 집중했어요.'
+  },
+  '중력': {
+    def: '중력은 지구가 모든 물체를 아래쪽으로 끌어당기는 힘이에요. 우리가 땅 위에 서 있을 수 있고, 던진 공이 다시 떨어지는 것도 모두 중력 덕분이에요. 달도 지구의 중력에 붙잡혀 지구 주위를 빙글빙글 돌고 있답니다.',
+    recipe: '우주 비행사 지수는 우주선 안에서 컵을 그냥 놓아봤어요.\n그런데 컵이 바닥에 떨어지지 않고 둥실 떠올랐어요.\n지구에서는 ___이 있어서 모든 것이 아래로 떨어지지만,\n우주에서는 그 힘이 없으니 모든 것이 공중에 떠다닌답니다.'
+  },
+  '민주주의': {
+    def: '민주주의는 모든 사람이 평등하게 의견을 내고 함께 결정을 내리는 방식이에요. 반장을 뽑을 때 손을 들어 투표하는 것처럼, 나라의 중요한 일도 국민이 직접 투표로 결정해요. 한 사람이 혼자 모든 것을 결정하는 게 아니라, 여러 사람의 목소리가 모여 나라를 만들어가는 거랍니다.',
+    recipe: '모든 사람이 평등하게 자신의 목소리를 낼 수 있는 세상.\n왕이나 소수의 귀족이 다스리는 것이 아니라,\n평범한 시민들이 투표를 통해 나라의 주인이 되는 ___는\n우리가 누리는 자유의 소중한 밑바탕입니다.'
+  },
+  '공감': {
+    def: '공감은 다른 사람의 마음이나 감정을 함께 느끼고 이해하는 거예요. 친구가 넘어져서 아파할 때 "많이 아프겠다"며 같이 속상한 마음이 드는 것이 바로 공감이에요. 공감을 잘하면 서로를 더 잘 이해하고 사이좋게 지낼 수 있답니다.',
+    recipe: '도서관에서 슬픈 이야기를 읽던 민준이는 눈물이 날 것 같았어요.\n책 속 주인공의 마음이 자기 마음처럼 느껴졌기 때문이에요.\n선생님은 이런 감정을 ___이라고 알려주시며,\n다른 사람의 마음을 이해하는 것이 얼마나 소중한지 이야기해주셨어요.'
   }
+};
+
+/* ── 국립국어원 API: Netlify Function 통해 호출 ── */
+async function krDictJsonp(word) {
+  const res = await fetch(`/.netlify/functions/krdict?word=${encodeURIComponent(word)}`);
+  if (!res.ok) throw new Error('Netlify function error: ' + res.status);
+  return await res.json();
 }
 
-/* 빈칸 레시피 가져오기 (AI, 없으면 사전 용례 활용) */
-async function getRecipe(word) {
-  // 먼저 사전 용례 시도
-  let example = '';
+/* ── 단어 뜻 가져오기 ── */
+async function getDef(word) {
+  // 1) 하드코딩 프리셋
+  if (PRESET[word]) return PRESET[word].def;
+
+  // 2) 국립국어원 JSONP 시도
   try {
-    const url = `https://stdict.korean.go.kr/api/search.do?key=${KRDICT_KEY}&q=${encodeURIComponent(word)}&req_type=json&num=5&start=1&type1=word&advanced=n`;
-    const res = await fetch(CORS_PROXY + encodeURIComponent(url));
-    const data = await res.json();
+    const data = await krDictJsonp(word);
     const items = data?.channel?.item;
     if (items) {
       const arr = Array.isArray(items) ? items : [items];
+      const defs = [];
       for (const item of arr) {
-        const sense = item?.sense;
-        const senseArr = Array.isArray(sense) ? sense : [sense];
-        const ex = senseArr[0]?.example;
-        if (ex) { example = ex; break; }
+        const sArr = Array.isArray(item?.sense) ? item.sense : [item?.sense].filter(Boolean);
+        for (const s of sArr) {
+          if (s?.definition) { defs.push(s.definition); break; }
+        }
+        if (defs.length >= 2) break;
+      }
+      if (defs.length > 0) {
+        const raw = defs.join(' ');
+        try {
+          return await askAI(
+            `국어사전의 "${word}" 뜻: "${raw}"\n` +
+            `이 뜻을 초등학생이 이해하기 쉽게 2~3문장으로 풀어줘. 일상 예시 하나 포함. 이모지 없이.`
+          );
+        } catch { return raw; }
+      }
+    }
+  } catch(e) { console.warn('KrDict JSONP 실패:', e.message); }
+
+  // 3) Claude AI 직접 설명
+  try {
+    return await askAI(
+      `초등학생에게 "${word}"의 뜻을 2~3문장으로 쉽고 친근하게 설명해줘. 일상 예시 하나 포함. 이모지 없이.`
+    );
+  } catch {
+    return `"${word}"의 뜻을 지금 불러올 수 없어요. 인터넷 연결을 확인하거나 예시 단어(발효, 공감 등)를 사용해 보세요.`;
+  }
+}
+
+/* ── 빈칸 레시피 가져오기 ── */
+async function getRecipe(word) {
+  // 1) 하드코딩 프리셋
+  if (PRESET[word]) return PRESET[word].recipe;
+
+  // 2) 사전 용례 수집 후 Claude AI로 레시피 생성
+  let example = '';
+  try {
+    const data = await krDictJsonp(word);
+    const items = data?.channel?.item;
+    if (items) {
+      const arr = Array.isArray(items) ? items : [items];
+      outer: for (const item of arr) {
+        const sArr = Array.isArray(item?.sense) ? item.sense : [item?.sense].filter(Boolean);
+        for (const s of sArr) {
+          if (s?.example) { example = s.example; break outer; }
+        }
       }
     }
   } catch {}
 
-  // AI로 레시피 생성
+  // 3) Claude AI로 레시피 생성
   try {
-    const hint = example ? `참고 예문: "${example}"
-` : '';
+    const hint = example ? `참고 용례: "${example}"\n` : '';
     return await askAI(
       hint +
-      `초등학생이 읽기 좋은 흥미로운 문장을 3~4줄 만들어줘. ` +
-      `"${word}"라는 단어가 자연스럽게 들어가야 하고, ` +
-      `그 단어가 들어갈 자리에 "___"(언더바 3개)를 딱 1개만 넣어줘. ` +
-      `이모지 없이 텍스트만으로 작성해줘.`
+      `초등학생이 읽기 좋고 흥미로운 문장을 3~4줄 만들어줘. ` +
+      `"${word}"가 자연스럽게 들어가야 하고, 그 자리에만 "___"를 딱 1개 넣어줘. 이모지 없이.`
     );
   } catch {
-    // AI도 없으면: 사전 용례 기반으로 빈칸 직접 생성
     if (example) {
-      // 단어를 ___로 치환
-      const blank = example.replace(new RegExp(word, 'g'), '___');
-      return blank !== example ? blank : `오늘 우리는 ___에 대해 배웠어요.
-선생님께서 칠판에 크게 써주셨답니다.
-이 단어를 알면 세상이 더 잘 보인대요.`;
+      const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const blanked = example.replace(new RegExp(escaped, 'g'), '___');
+      if (blanked !== example) return blanked;
     }
-    return `오늘 우리는 ___에 대해 배웠어요.
-선생님께서 칠판에 크게 써주셨답니다.
-이 단어를 알면 세상이 더 잘 보인대요.`;
+    return `오늘 선생님은 칠판에 ___라고 크게 쓰셨어요.\n우리는 이 단어가 무슨 뜻인지 함께 생각해 보았어요.\n이 단어를 알면 세상이 조금 더 넓어 보인답니다.`;
   }
 }
 
